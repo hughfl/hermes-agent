@@ -753,21 +753,60 @@ class TestWebServerEndpoints:
         return {field["key"]: field for field in payload["fields"]}
 
 
-    def test_openviking_dashboard_persists_typed_recall_values(self):
+    # A user-installed memory provider whose live ``get_config_schema`` declares typed fields
+    # (integer/number/boolean with bounds) and no ``save_config`` of its own, so the router's generic
+    # coercion and ``memory.<name>`` write run. Bundled providers no longer ship such a schema
+    # (openviking moved to the plugin catalog).
+    _TYPEDPROV_INIT = """
+from agent.memory_provider import MemoryProvider
+
+
+class TypedProvMemoryProvider(MemoryProvider):
+    @property
+    def name(self):
+        return "typedprov"
+
+    def is_available(self):
+        return True
+
+    def initialize(self, session_id, **kwargs):
+        pass
+
+    def get_tool_schemas(self):
+        return []
+
+    def get_config_schema(self):
+        return [
+            {"key": "endpoint", "description": "Server URL", "required": True, "default": "http://127.0.0.1:1933"},
+            {"key": "recall_limit", "description": "Limit", "type": "integer", "minimum": 1, "maximum": 100, "default": 6},
+            {"key": "recall_score_threshold", "description": "Threshold", "type": "number",
+             "minimum": 0.0, "maximum": 1.0, "step": 0.01, "default": 0.15},
+            {"key": "profile_token_budget", "description": "Budget", "type": "integer", "minimum": 0, "default": 4000},
+            {"key": "recall_prefer_abstract", "description": "Abstracts", "type": "boolean", "default": False},
+            {"key": "recall_resources", "description": "Resources", "type": "boolean", "default": True},
+        ]
+"""
+
+    def _install_typedprov(self):
+        from hermes_constants import get_hermes_home
+
+        plugin_dir = get_hermes_home() / "plugins" / "typedprov"
+        plugin_dir.mkdir(parents=True, exist_ok=True)
+        (plugin_dir / "__init__.py").write_text(self._TYPEDPROV_INIT, encoding="utf-8")
+        return plugin_dir
+
+    def test_provider_dashboard_persists_typed_values(self):
         from hermes_cli.config import load_config
 
+        self._install_typedprov()
         resp = self.client.put(
-            "/api/memory/providers/openviking/config",
+            "/api/memory/providers/typedprov/config",
             json={
                 "values": {
                     "endpoint": "http://127.0.0.1:1933",
                     "recall_limit": "12",
                     "recall_score_threshold": "0.42",
-                    "recall_max_injected_chars": "8000",
                     "profile_token_budget": "7000",
-                    "recall_timeout_seconds": "2.5",
-                    "recall_request_timeout_seconds": "1.5",
-                    "recall_full_read_limit": "5",
                     "recall_prefer_abstract": True,
                     "recall_resources": False,
                 }
@@ -775,16 +814,17 @@ class TestWebServerEndpoints:
         )
 
         assert resp.status_code == 200
-        config = load_config()["memory"]["openviking"]
+        config = load_config()["memory"]["typedprov"]
         assert config["recall_limit"] == 12
         assert config["recall_score_threshold"] == 0.42
         assert config["profile_token_budget"] == 7000
         assert config["recall_prefer_abstract"] is True
         assert config["recall_resources"] is False
 
-    def test_openviking_dashboard_rejects_out_of_range_recall_value(self):
+    def test_provider_dashboard_rejects_out_of_range_value(self):
+        self._install_typedprov()
         resp = self.client.put(
-            "/api/memory/providers/openviking/config",
+            "/api/memory/providers/typedprov/config",
             json={
                 "values": {
                     "endpoint": "http://127.0.0.1:1933",
@@ -794,23 +834,6 @@ class TestWebServerEndpoints:
         )
 
         assert resp.status_code == 400
-
-    def test_openviking_dashboard_rejects_blocked_endpoint_before_saving(self):
-        from hermes_cli.config import load_config
-
-        resp = self.client.put(
-            "/api/memory/providers/openviking/config",
-            json={
-                "values": {
-                    "endpoint": "http://169.254.169.254/latest/meta-data/credential",
-                }
-            },
-        )
-
-        assert resp.status_code == 400
-        assert "credential" not in resp.json()["detail"]
-        memory_config = load_config().get("memory", {})
-        assert "openviking" not in memory_config
 
 
     # A user-installed memory provider with a DECLARED config surface (``config_schema.py``, flat

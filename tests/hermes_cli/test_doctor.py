@@ -420,8 +420,7 @@ class TestDoctorMemoryProviderSection:
 
 
     def test_mem0_provider_not_installed_shows_fail(self, monkeypatch, tmp_path):
-        # Make mem0 import fail
-        monkeypatch.setitem(sys.modules, "plugins.memory.mem0", None)
+        # mem0 is a catalog plugin; the isolated home has none installed, so the import fails.
         out = self._run_doctor_and_capture(monkeypatch, tmp_path, provider="mem0")
         assert "Memory Provider" in out
         assert "Built-in memory active" not in out
